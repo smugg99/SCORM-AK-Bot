@@ -41,6 +41,10 @@ def load_cookies(page: Page):
     print("Loading cookies")
 
     try:
+        if not os.path.exists(COOKIES_FILENAME):
+            print("Cookies file not found!")
+            return
+
         with open(COOKIES_FILENAME, 'r') as file:
             cookies: JSON = json.load(file)
             page.context.add_cookies(cookies)
@@ -54,6 +58,24 @@ def unload_cookies(page: Page):
 
     page.context.clear_cookies()
     page.reload()
+
+
+def goto_url(page: Page, url: str) -> bool:
+    print("Going to: " + url.strip())
+
+    page.goto(build_url(url))
+    page.wait_for_load_state('networkidle')
+
+    goto_success: bool = True if url in page.url else False
+
+    if not goto_success:
+        print("Going to: " + url.strip() + " has failed!")
+
+    return goto_success
+
+
+def is_on_url(page: Page, url: str) -> bool:
+    return True if build_url(url) in page.url else False
 
 
 def get_current_progress(page: Page) -> List[Dict[str, Any]]:
@@ -107,8 +129,8 @@ def get_current_progress(page: Page) -> List[Dict[str, Any]]:
     return progress
 
 
-def login_with_credentials(page: Page) -> bool:
-    print("Logging in")
+def input_login_credentials(page: Page) -> bool:
+    print("Inputting login credentials")
 
     try:
         retries: int = 0
@@ -119,7 +141,7 @@ def login_with_credentials(page: Page) -> bool:
             page.click(SUBMIT_BUTTON_FORM)
             page.wait_for_load_state('networkidle')
 
-            if build_url(COCKPIT_URL) not in page.url:
+            if not is_on_url(page, COCKPIT_URL):
                 # Unload cookies which may be invalid, try to login again
                 unload_cookies(page)
             else:
@@ -149,15 +171,17 @@ def main():
 
         try:
             # Go to cockpit first, if it doesn't work then login and save cookies...
-
-            page.goto(build_url(LOGIN_URL))
             load_cookies(page)
+            goto_cockpit_success: bool = goto_url(page, COCKPIT_URL)
 
-            if build_url(LOGIN_URL) in page.url:
-                if not login_with_credentials(page):
-                    context.close()
+            if not goto_cockpit_success:
+                goto_login_success: bool = goto_url(page, LOGIN_URL)
 
-            page.goto(build_url(COURSE_URL).format(COURSE_ID))
+                if goto_login_success:
+                    if not input_login_credentials(page):
+                        context.close()
+
+            goto_url(page, COURSE_URL.format(COURSE_ID))
 
             progress: List[Dict[str, any]] = get_current_progress(page)
             print(progress)
