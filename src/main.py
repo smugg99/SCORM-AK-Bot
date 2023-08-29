@@ -15,6 +15,7 @@ JSON = Dict[str, Any]
 COOKIES_FILENAME: str = "cookies.json"
 COURSE_ID: int = 58
 SCORM_PLAYER_URL: str = "/mod/scorm/player.php"
+SCORM_IFRAME_SELECTOR: str = "iframe#scorm_object"
 
 BASE_URL: str = "https://ekursy.akademiakierowcy.pl"
 LOGIN_URL: str = "/login/index.php"
@@ -32,6 +33,9 @@ PROGRESS_BAR_CELL_NOT_COMPLETED_COLOR: str = "#025187"
 
 MAX_LOGIN_RETRIES: int = 3
 MAX_SLIDE_SKIP_RETRIES: int = 3
+
+with open('src/slide_skip.js', 'r') as js_file:
+    SLIDE_SKIP_CODE: str = js_file.read()
 
 with open('src/mutation_observer.js', 'r') as js_file:
     MUTATION_OBSERVER_CODE: str = js_file.read()
@@ -89,7 +93,7 @@ def goto_url(page: Page, url: str, expected_url: Optional[str] = None) -> bool:
         print(e)
 
     goto_success: bool = True if expected_url or goal_url in page.url else False
-    print(goto_success)
+
     if not goto_success:
         print("Going to: " + goal_url + " has failed!")
 
@@ -172,7 +176,7 @@ def input_login_credentials(page: Page) -> bool:
     print("Inputing login credentials")
 
     try:
-        retries: int = 0
+        _retries: int = 0
 
         while True:
             page.fill(USERNAME_FORM, USERNAME)
@@ -186,10 +190,12 @@ def input_login_credentials(page: Page) -> bool:
             else:
                 break
 
-            if retries >= MAX_LOGIN_RETRIES:
+            if _retries >= MAX_LOGIN_RETRIES:
                 raise Exception("Login failed, still on login screen!")
 
-            retries += 1
+            _retries += 1
+            print("Retrying to log in ({})".format(_retries))
+
     except Exception as e:
         print("Exception: ", e)
         return False
@@ -234,8 +240,7 @@ def main():
             if not goto_scorm_url(page, next_course_subject_url):
                 return
 
-            iframe_element = page.query_selector(
-                "iframe#scorm_object")
+            iframe_element = page.query_selector(SCORM_IFRAME_SELECTOR)
 
             if not iframe_element:
                 print("Iframe not found.")
@@ -243,17 +248,24 @@ def main():
 
             frame: Frame = iframe_element.content_frame()
 
+            _retries: int = 0
+
             def slide_changed_content():
                 print("Slide actually has been skipped!")
+                nonlocal _retries
+                _retries = 0
 
             context.expose_function("pyCallback", slide_changed_content)
             frame.evaluate(MUTATION_OBSERVER_CODE)
 
             while True:
                 time.sleep(1)
-                print("Forcing presentation slide skip")
 
-                frame.evaluate("cp.movie.play();")
+                print("Forcing presentation slide skip ({})".format(
+                    _retries))
+                frame.evaluate(SLIDE_SKIP_CODE)
+
+                _retries += 1
 
 
 # ================# Functions #================ #

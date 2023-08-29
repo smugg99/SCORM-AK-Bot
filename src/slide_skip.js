@@ -1,0 +1,1 @@
+cp.movie.play();
