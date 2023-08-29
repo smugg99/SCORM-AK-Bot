@@ -1,9 +1,11 @@
 import json
 import os
+import time
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup, NavigableString
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, Browser, Frame, sync_playwright
 
 # Fill with your credentials
 from credentials import USERNAME, PASSWORD
@@ -12,6 +14,7 @@ JSON = Dict[str, Any]
 
 COOKIES_FILENAME: str = "cookies.json"
 COURSE_ID: int = 58
+SCORM_PLAYER_URL: str = "/mod/scorm/player.php"
 
 BASE_URL: str = "https://ekursy.akademiakierowcy.pl"
 LOGIN_URL: str = "/login/index.php"
@@ -28,9 +31,23 @@ PROGRESS_BAR_CELL_COMPLETED_COLOR: str = "#73A839"
 PROGRESS_BAR_CELL_NOT_COMPLETED_COLOR: str = "#025187"
 
 MAX_LOGIN_RETRIES: int = 3
+MAX_SLIDE_SKIP_RETRIES: int = 3
+
+with open('src/mutation_observer.js', 'r') as js_file:
+    MUTATION_OBSERVER_CODE: str = js_file.read()
 
 
 # ================# Functions #================ #
+
+
+def get_directory_path(url):
+    parsed_url = urlparse(url)
+    directory_and_query = parsed_url.path
+
+    if parsed_url.query:
+        directory_and_query += "?" + parsed_url.query
+
+    return directory_and_query
 
 
 def build_url(endpoint):
@@ -60,18 +77,30 @@ def unload_cookies(page: Page):
     page.reload()
 
 
-def goto_url(page: Page, url: str) -> bool:
-    print("Going to: " + url.strip())
+def goto_url(page: Page, url: str, expected_url: Optional[str] = None) -> bool:
+    goal_url: str = url.strip()
 
-    page.goto(build_url(url))
-    page.wait_for_load_state('networkidle')
+    print("Going to: " + goal_url)
 
-    goto_success: bool = True if url in page.url else False
+    try:
+        page.goto(build_url(goal_url))
+        page.wait_for_load_state('networkidle')
+    except Exception as e:
+        print(e)
 
+    goto_success: bool = True if expected_url or goal_url in page.url else False
+    print(goto_success)
     if not goto_success:
-        print("Going to: " + url.strip() + " has failed!")
+        print("Going to: " + goal_url + " has failed!")
 
     return goto_success
+
+
+def goto_scorm_url(page: Page, url: str) -> bool:
+    # https://ekursy.akademiakierowcy.pl/mod/scorm/view.php?id=1809
+    # https://ekursy.akademiakierowcy.pl/mod/scorm/player.php?a=1787&currentorg=Course_ID1_ORG&scoid=8118
+
+    return goto_url(page, url, SCORM_PLAYER_URL)
 
 
 def is_on_url(page: Page, url: str) -> bool:
@@ -129,8 +158,18 @@ def get_current_progress(page: Page) -> List[Dict[str, Any]]:
     return progress
 
 
+def get_next_course_subject_url(progress: List[Dict[str, any]]) -> Optional[str]:
+    for course_subject in progress:
+        if not course_subject.get("probably-completed"):
+            return get_directory_path(course_subject.get("location", ""))
+
+
+def scrape_scorm_url_from_course_subject():
+    pass
+
+
 def input_login_credentials(page: Page) -> bool:
-    print("Inputting login credentials")
+    print("Inputing login credentials")
 
     try:
         retries: int = 0
@@ -165,36 +204,58 @@ def input_login_credentials(page: Page) -> bool:
 
 def main():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser: Browser = p.chromium.launch(headless=False)
         context = browser.new_context()
-        page = context.new_page()
+        page: Page = context.new_page()
 
-        try:
-            # Go to cockpit first, if it doesn't work then login and save cookies...
-            load_cookies(page)
-            goto_cockpit_success: bool = goto_url(page, COCKPIT_URL)
+        load_cookies(page)
 
-            if not goto_cockpit_success:
-                goto_login_success: bool = goto_url(page, LOGIN_URL)
+        if not goto_url(page, COCKPIT_URL):
+            if goto_url(page, LOGIN_URL):
+                if not input_login_credentials(page):
+                    return
+            else:
+                return
 
-                if goto_login_success:
-                    if not input_login_credentials(page):
-                        context.close()
+        goto_url(page, COURSE_URL.format(COURSE_ID))
 
-            goto_url(page, COURSE_URL.format(COURSE_ID))
+        while True:
+            print("Starting solver")
 
             progress: List[Dict[str, any]] = get_current_progress(page)
-            print(progress)
+            next_course_subject_url: str = get_next_course_subject_url(
+                progress)
+            if not next_course_subject_url:
+                print("Every subject of the course has been completed!")
+                return
 
-        except Exception as e:
-            print("Exception: ", e)
-        finally:
-            input("Input anything to close the browser window...")
-            context.close()
+            print("Next course subject url: " + next_course_subject_url)
+
+            if not goto_scorm_url(page, next_course_subject_url):
+                return
+
+            iframe_element = page.query_selector(
+                "iframe#scorm_object")
+
+            if not iframe_element:
+                print("Iframe not found.")
+                return
+
+            frame: Frame = iframe_element.content_frame()
+
+            def slide_changed_content():
+                print("Slide actually has been skipped!")
+
+            context.expose_function("pyCallback", slide_changed_content)
+            frame.evaluate(MUTATION_OBSERVER_CODE)
+
+            while True:
+                time.sleep(1)
+                print("Forcing presentation slide skip")
+
+                frame.evaluate("cp.movie.play();")
 
 
 # ================# Functions #================ #
-
-
 if __name__ == "__main__":
     main()
