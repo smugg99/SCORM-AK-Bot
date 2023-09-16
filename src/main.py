@@ -1,3 +1,5 @@
+#!/home/karol/Documents/Repositories/SCORM-AK-Bot/venv/bin/python3.9
+
 import json
 import os
 import time
@@ -229,8 +231,9 @@ def main():
             print("Starting solver")
 
             progress: List[Dict[str, any]] = get_current_progress(page)
-            next_course_subject_url: str = get_next_course_subject_url(
-                progress)
+            next_course_subject_url: str = get_next_course_subject_url(progress)
+            #next_course_subject_url: str = get_directory_path(progress[2]["location"])
+            
             if not next_course_subject_url:
                 print("Every subject of the course has been completed!")
                 return
